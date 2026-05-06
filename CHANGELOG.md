@@ -1,5 +1,20 @@
 
 
+## [1.31.24](https://github.com/msgbyte/tianji/compare/v1.31.23...v1.31.24) (2026-05-06)
+
+### Features
+
+* implement ErrorRateChart in AIGatewayAnalytics to visualize error rates over time ([9d45e62](https://github.com/msgbyte/tianji/commit/9d45e62eeae33df848894fcbe521fb29e74acf0b))
+
+### Bug Fixes
+
+* enhance error message in verifyUserApiKey to include partial input for better debugging ([f66ba76](https://github.com/msgbyte/tianji/commit/f66ba761fb4c5f4db1d4207c60ad3a9da3e86bf5))
+
+### Others
+
+* modify DialogContent to support dynamic portal container selection ([6658ed1](https://github.com/msgbyte/tianji/commit/6658ed1d49e7f3130117089a268c384307dd5de4))
+* update SheetContent component to support dynamic portal container selection ([fa250d7](https://github.com/msgbyte/tianji/commit/fa250d70c06a2312023e2149f9be2b6242b99622))
+
 ## [1.31.23](https://github.com/msgbyte/tianji/compare/v1.31.22...v1.31.23) (2026-04-28)
 
 ### Features
