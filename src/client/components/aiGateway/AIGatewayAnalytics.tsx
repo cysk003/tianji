@@ -14,6 +14,17 @@ import {
 } from '../insights/InsightQueryChart';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
+import { TimeEventChart } from '../chart/TimeEventChart';
+import { LoadingView } from '../LoadingView';
+import { DateUnit, getDateArray } from '@tianji/shared';
+import type { InsightsRawData } from '@/hooks/useInsightsData';
+import type { ChartConfig } from '../ui/chart';
+
+// Status color tokens used in the Errors tab.
+// Keep the success/failure colors aligned with the rest of the app
+// (see AIGatewayStatus: bg-green-* for Success, bg-red-* for Failed).
+const STATUS_SUCCESS_COLOR = '#22c55e';
+const STATUS_FAILED_COLOR = '#ef4444';
 
 interface AIGatewayAnalyticsProps {
   gatewayId: string;
@@ -46,6 +57,22 @@ export const AIGatewayAnalytics: React.FC<AIGatewayAnalyticsProps> = React.memo(
         timezone: getUserTimezone(),
       }),
       [startDate, endDate, unit]
+    );
+
+    // Force Success vs Failure colors. Series keys follow the
+    // `${alias|name}-${groupValue}` pattern from generateSeriesName.
+    const statusChartConfig: ChartConfig = useMemo(
+      () => ({
+        '$all_event-Success': {
+          label: t('Success'),
+          color: STATUS_SUCCESS_COLOR,
+        },
+        '$all_event-Failed': {
+          label: t('Failed'),
+          color: STATUS_FAILED_COLOR,
+        },
+      }),
+      [t]
     );
 
     return (
@@ -509,6 +536,7 @@ export const AIGatewayAnalytics: React.FC<AIGatewayAnalyticsProps> = React.memo(
                     groups={[{ value: 'status', type: 'string' }]}
                     time={timeConfig}
                     chartType="pie"
+                    chartConfig={statusChartConfig}
                     valueProcessor={defaultValueProcessor.alwaysPositive}
                   />
                 </CardContent>
@@ -545,33 +573,22 @@ export const AIGatewayAnalytics: React.FC<AIGatewayAnalyticsProps> = React.memo(
               </Card>
             </div>
 
-            {/* Success Rate Over Time */}
+            {/* Error Rate Over Time */}
             <Card>
               <CardHeader>
-                <CardTitle>{t('Successful Requests Trend')}</CardTitle>
+                <CardTitle>{t('Error Rate Trend')}</CardTitle>
                 <p className="text-muted-foreground text-sm">
-                  {t('Number of events with Success status over time')}
+                  {t(
+                    'Percentage of failed requests out of total requests over time (Failed / Total %)'
+                  )}
                 </p>
               </CardHeader>
               <CardContent>
-                <InsightQueryChart
+                <ErrorRateChart
                   className="h-[300px] w-full"
                   workspaceId={workspaceId}
-                  insightId={gatewayId}
-                  insightType="aigateway"
-                  metrics={[{ name: '$all_event', math: 'events' }]}
-                  filters={[
-                    {
-                      name: 'status',
-                      type: 'string',
-                      operator: 'equals',
-                      value: 'Success',
-                    },
-                  ]}
-                  groups={[]}
+                  gatewayId={gatewayId}
                   time={timeConfig}
-                  chartType="area"
-                  valueProcessor={defaultValueProcessor.alwaysPositive}
                 />
               </CardContent>
             </Card>
@@ -615,3 +632,100 @@ export const AIGatewayAnalytics: React.FC<AIGatewayAnalyticsProps> = React.memo(
   }
 );
 AIGatewayAnalytics.displayName = 'AIGatewayAnalytics';
+
+interface ErrorRateChartProps {
+  workspaceId: string;
+  gatewayId: string;
+  time: {
+    startAt: number;
+    endAt: number;
+    unit: DateUnit;
+    timezone?: string;
+  };
+  className?: string;
+}
+
+const ErrorRateChart: React.FC<ErrorRateChartProps> = React.memo((props) => {
+  const { workspaceId, gatewayId, time, className } = props;
+  const { t } = useTranslation();
+
+  const { data: rawData = [], isLoading } = trpc.insights.query.useQuery(
+    {
+      workspaceId,
+      insightId: gatewayId,
+      insightType: 'aigateway',
+      metrics: [{ name: '$all_event', math: 'events' }],
+      filters: [],
+      groups: [{ value: 'status', type: 'string' }],
+      time: {
+        timezone: getUserTimezone(),
+        ...time,
+      },
+    },
+    {
+      trpc: {
+        context: {
+          skipBatch: true,
+        },
+      },
+    }
+  );
+
+  const chartData = useMemo(() => {
+    const dataArr = rawData as InsightsRawData[];
+    // Aggregate success/failed counts per date bucket
+    const dateMap = new Map<string, { success: number; failed: number }>();
+
+    dataArr.forEach((item) => {
+      const status = (item as any).status;
+      item.data.forEach((d) => {
+        const entry = dateMap.get(d.date) ?? { success: 0, failed: 0 };
+        if (status === 'Success') {
+          entry.success += d.value;
+        } else if (status === 'Failed') {
+          entry.failed += d.value;
+        }
+        dateMap.set(d.date, entry);
+      });
+    });
+
+    const arr = Array.from(dateMap.entries()).map(
+      ([date, { success, failed }]) => {
+        const total = success + failed;
+        const rate = total > 0 ? (failed / total) * 100 : 0;
+        return { date, value: Math.max(0, Math.min(100, rate)) };
+      }
+    );
+
+    if (arr.length === 0) {
+      return [];
+    }
+
+    return getDateArray(arr, time.startAt, time.endAt, time.unit);
+  }, [rawData, time.startAt, time.endAt, time.unit]);
+
+  const chartConfig: ChartConfig = useMemo(
+    () => ({
+      value: {
+        label: t('Error Rate'),
+        color: STATUS_FAILED_COLOR,
+      },
+    }),
+    [t]
+  );
+
+  return (
+    <LoadingView isLoading={isLoading}>
+      <TimeEventChart
+        className={className}
+        data={chartData}
+        unit={time.unit}
+        chartConfig={chartConfig}
+        chartType="area"
+        yAxisDomain={[0, 100]}
+        valueFormatter={(v) => `${v.toFixed(2)}%`}
+      />
+    </LoadingView>
+  );
+});
+ErrorRateChart.displayName = 'ErrorRateChart';
