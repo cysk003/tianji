@@ -690,18 +690,26 @@ const ErrorRateChart: React.FC<ErrorRateChartProps> = React.memo((props) => {
     });
 
     const arr = Array.from(dateMap.entries()).map(
-      ([date, { success, failed }]) => {
-        const total = success + failed;
-        const rate = total > 0 ? (failed / total) * 100 : 0;
-        return { date, value: Math.max(0, Math.min(100, rate)) };
-      }
+      ([date, { success, failed }]) => ({ date, success, failed })
     );
 
     if (arr.length === 0) {
       return [];
     }
 
-    return getDateArray(arr, time.startAt, time.endAt, time.unit);
+    // Fill missing date buckets with success=0/failed=0,
+    // then compute rate. Buckets with no traffic at all (total === 0)
+    // are emitted as null so the line is left blank instead of pinned to 0.
+    return getDateArray(arr, time.startAt, time.endAt, time.unit).map(
+      ({ date, success, failed }) => {
+        const total = success + failed;
+        if (total === 0) {
+          return { date, value: null as unknown as number };
+        }
+        const rate = (failed / total) * 100;
+        return { date, value: Math.max(0, Math.min(100, rate)) };
+      }
+    );
   }, [rawData, time.startAt, time.endAt, time.unit]);
 
   const chartConfig: ChartConfig = useMemo(
