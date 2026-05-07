@@ -1,5 +1,11 @@
 
 
+## [1.31.25](https://github.com/msgbyte/tianji/compare/v1.31.24...v1.31.25) (2026-05-07)
+
+### Others
+
+* update ErrorRateChart to handle missing data and improve rate calculation logic ([882894c](https://github.com/msgbyte/tianji/commit/882894cd855fa522b679a588a7a43d5509b9695e))
+
 ## [1.31.24](https://github.com/msgbyte/tianji/compare/v1.31.23...v1.31.24) (2026-05-06)
 
 ### Features
