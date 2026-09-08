@@ -1,5 +1,16 @@
 
 
+## [1.32.36](https://github.com/msgbyte/tianji/compare/v1.32.35...v1.32.36) (2026-09-08)
+
+### Features
+
+* **ai-gateway:** allow custom observer latency thresholds ([c7f404f](https://github.com/msgbyte/tianji/commit/c7f404fffa3f519edb8c0d57697ee3fe9fe58e05))
+
+### Bug Fixes
+
+* **ai-gateway:** render observer reference images ([be57d59](https://github.com/msgbyte/tianji/commit/be57d595fefb10f379f9ae3d681110113b663b0f))
+* **auth:** configure GitHub OAuth issuer ([1b8f505](https://github.com/msgbyte/tianji/commit/1b8f505b4a60c68574291a1b1d0b7cbf57e9ec66))
+
 ## [1.32.35](https://github.com/msgbyte/tianji/compare/v1.32.34...v1.32.35) (2026-09-05)
 
 ### Features
