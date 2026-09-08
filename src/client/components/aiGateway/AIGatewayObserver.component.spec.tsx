@@ -269,6 +269,79 @@ test('renders conversation message content as Markdown', async () => {
   expect(screen.getByText('importante').tagName).toBe('STRONG');
 });
 
+test.each(['Conversation', 'Input'])(
+  'renders ordered reference images and opens the selected preview in %s',
+  async (tab) => {
+    mocks.data = {
+      items: [
+        createLog('log_images', '', {
+          requestPayload: {
+            messages: [
+              {
+                role: 'user',
+                content: [
+                  { type: 'text', text: 'Primera referencia' },
+                  {
+                    type: 'image_url',
+                    image_url: { url: 'https://example.com/primera.png' },
+                  },
+                  { type: 'text', text: '```txt\nDetalles' },
+                  { type: 'text', text: 'de la referencia\n```' },
+                  {
+                    type: 'image_url',
+                    image_url: { url: 'https://example.com/segunda.png' },
+                  },
+                ],
+              },
+              {
+                role: 'user',
+                content: [
+                  {
+                    type: 'image_url',
+                    image_url: { url: 'https://example.com/tercera.png' },
+                  },
+                ],
+              },
+            ],
+          },
+        }),
+      ],
+    };
+    render(<AIGatewayObserver gatewayId="gateway_1" />);
+    fireEvent.click(screen.getByRole('tab', { name: tab }));
+
+    const images = screen.getAllByRole('img', { name: 'Message attachment' });
+    expect(images.map((img) => img.getAttribute('src'))).toEqual([
+      'https://example.com/primera.png',
+      'https://example.com/segunda.png',
+      'https://example.com/tercera.png',
+    ]);
+    const before = await screen.findByText('Primera referencia', {
+      selector: '.observer-bubble *',
+    });
+    const between = await screen.findByText(/Detalles.*de la referencia/, {
+      selector: tab === 'Conversation' ? 'pre code' : '.observer-bubble *',
+    });
+    for (const [first, second] of [
+      [before, images[0]],
+      [images[0], between],
+      [between, images[1]],
+    ]) {
+      expect(first.compareDocumentPosition(second)).toBe(
+        Node.DOCUMENT_POSITION_FOLLOWING
+      );
+    }
+
+    fireEvent.click(images[1].closest('button')!);
+    const preview = screen.getByRole('dialog', { name: 'Message attachment' });
+    expect(preview.querySelector('.ant-image-preview-img')).toHaveAttribute(
+      'src',
+      'https://example.com/segunda.png'
+    );
+    fireEvent.keyDown(preview, { key: 'Escape' });
+  }
+);
+
 test('renders Anthropic server tools and structured tool results', () => {
   const { rerender } = render(<AIGatewayObserver gatewayId="gateway_1" />);
 

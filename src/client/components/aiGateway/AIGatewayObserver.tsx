@@ -1,4 +1,5 @@
 import { trpc } from '@/api/trpc';
+import { ImagePreview } from '@/components/ImagePreview';
 import { MarkdownViewer } from '@/components/MarkdownEditor';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -56,6 +57,7 @@ interface DisplayMessage {
   role: string;
   name?: string;
   content: string;
+  contentParts: (string | { imageUrl: string })[];
   toolCalls: DisplayToolCall[];
 }
 
@@ -787,13 +789,27 @@ function MessageList({
             <span>{getRoleLabel(message.role)}</span>
             {message.name && <code>{message.name}()</code>}
           </div>
-          {message.content && message.role !== 'tool' && (
-            <div className="observer-bubble">
-              {renderMarkdown ? (
-                <MarkdownViewer value={message.content} />
-              ) : (
-                message.content
-              )}
+          {message.contentParts.length > 0 && message.role !== 'tool' && (
+            <div className="observer-bubble space-y-2">
+              {message.contentParts.map((part, partIndex) => (
+                <div key={partIndex}>
+                  {typeof part === 'string' ? (
+                    renderMarkdown ? (
+                      <MarkdownViewer value={part} />
+                    ) : (
+                      part
+                    )
+                  ) : (
+                    <ImagePreview
+                      src={part.imageUrl}
+                      alt={t('Message attachment')}
+                      width={160}
+                      height={160}
+                      className="rounded object-contain"
+                    />
+                  )}
+                </div>
+              ))}
             </div>
           )}
           {message.toolCalls.map((call, callIndex) => (
@@ -1081,6 +1097,7 @@ function toDisplayMessage(value: unknown): DisplayMessage {
     role,
     name: message.name ?? toolResults[0]?.name,
     content: contentToText(content),
+    contentParts: contentToParts(content),
     toolCalls: [
       ...directCalls,
       ...anthropicCalls,
@@ -1127,6 +1144,32 @@ function contentToText(value: unknown): string {
     })
     .filter(Boolean)
     .join('\n');
+}
+
+function contentToParts(value: unknown): DisplayMessage['contentParts'] {
+  if (!Array.isArray(value)) return [contentToText(value)].filter(Boolean);
+  const parts: DisplayMessage['contentParts'] = [];
+
+  for (const part of value) {
+    const item = asRecord(part);
+    const imageUrl =
+      item?.type === 'image_url' ? item.image_url?.url : undefined;
+    if (typeof imageUrl === 'string' && imageUrl) {
+      parts.push({ imageUrl });
+      continue;
+    }
+
+    const text = contentToText([part]);
+    if (!text) continue;
+    const last = parts.at(-1);
+    if (typeof last === 'string') {
+      parts[parts.length - 1] = `${last}\n${text}`;
+    } else {
+      parts.push(text);
+    }
+  }
+
+  return parts;
 }
 
 function getPromptPreview(log: AIGatewayLogItem): string {
