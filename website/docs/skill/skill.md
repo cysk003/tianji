@@ -16,7 +16,9 @@ To create, test, deploy, and manage Workers, download the separate [Tianji Worke
 See the [Installation Guide](./installation.md) for one-click and manual setup.
 :::
 
-**What it covers:** 69 GET endpoints across 14 service domains:
+Before querying data, the skill reads the target instance's `/open/_document` to confirm exported GET routes and their parameter schemas. Bundled endpoint references are snapshots for orientation; the instance's document takes precedence. If discovery is unavailable or invalid, the agent reports the failure instead of guessing requests. Non-exported dashboard tRPC operations require separately maintained references and are outside this read-only skill.
+
+**What it covers:** read-only operations exported by the target instance, including:
 
 - **Website** — traffic stats, pageviews, geo distribution, Lighthouse reports
 - **Monitor** — uptime status, recent check data, monitor events
@@ -34,7 +36,7 @@ Tianji offers two ways to integrate with AI agents. Pick the one that fits your 
 |--|--|--|
 | **Form** | Plain documentation files (`SKILL.md` + references) | A long-running Node.js process |
 | **Runtime** | None — agent uses `curl` or built-in HTTP tools | `npx tianji-mcp-server` |
-| **Coverage** | 69 GET endpoints (read-only, full surface) | A curated subset of tools (read + some write) |
+| **Coverage** | GET operations discovered from the target's OpenAPI | A curated subset of tools (read + some write) |
 | **Setup** | Drop files into the agent's skills directory | Add MCP config to the agent's config file |
 | **Best for** | Cursor / Claude Code / Codex / any agent following the agentskills.io spec | Agents with first-class MCP support |
 
@@ -42,7 +44,7 @@ You can use both at the same time without conflict.
 
 ## Usage Examples
 
-Once installed, you can ask your AI agent natural-language questions and it will pick the right endpoint:
+Once installed, you can ask your AI agent natural-language questions and it will pick an endpoint from the target's OpenAPI document. These examples illustrate typical routes; the agent verifies paths and parameters against that document before making requests:
 
 ### Example 1: Website traffic overview
 
@@ -94,7 +96,7 @@ The skill instructs agents to:
 - **Redact or omit** these fields when summarising responses.
 - For workspace members / audit logs, only surface non-sensitive metadata (names, roles, timestamps) unless the user explicitly requests full detail.
 
-The bundled `openapi-readonly.json` also pre-redacts these fields at the schema level, so agents cannot accidentally rely on their structure.
+The bundled `openapi-readonly.json` redacts sensitive schema fields, but this does not sanitize live schemas or actual API responses. The agent must still apply these rules when reading and summarizing data.
 
 ## Source
 

@@ -35,7 +35,9 @@ For Claude Code, use `~/.claude/skills`; for Cursor, use `~/.cursor/skills`. If 
 | Configure         | Text/Secret variables, shared-module bindings, cron expressions, and workspace timezone             |
 | Maintain          | Revision comparison and rollback, pause/resume, and deletion                                        |
 
-The skill explains the limits of each interface. For example, CLI deployment activates a Worker and can disable its existing schedule; a draft test isolates KV but can still call real external services. It directs the agent to supported dashboard actions where no public API or CLI command exists.
+Before operating on an instance, the skill instructs the agent to read that instance's `/open/_document` and confirm exported operations, paths, and request schemas. The live document takes precedence over bundled API examples. If discovery fails, the agent reports the problem instead of guessing management API requests.
+
+The skill focuses on operational rules that a schema alone cannot supply: preserving active/cron settings, retaining Secrets during replacement updates, and understanding rollback scope. For example, CLI deployment activates a Worker and can disable its existing schedule; a draft test isolates KV but can still call real external services. When an operation is absent from OpenAPI, the agent uses supported dashboard actions or separately verified tRPC calls.
 
 ## Example requests
 
@@ -64,7 +66,7 @@ Provide the target server and workspace through your existing configuration. Kee
 
 ## Source and maintenance
 
-The source lives in [`skills/tianji-worker`](https://github.com/msgbyte/tianji/tree/master/skills/tianji-worker). The website build refreshes the bundled runtime reference from the Worker documentation and rebuilds the download. To rebuild it locally:
+The source lives in [`skills/tianji-worker`](https://github.com/msgbyte/tianji/tree/master/skills/tianji-worker). The website build refreshes the bundled runtime reference from the Worker documentation and rebuilds the download. Operations not exported to OpenAPI, including their tRPC inputs, require separate maintenance against the matching server and dashboard code; `/open/_document` does not synchronize them. CLI and runtime behavior also remain part of the maintained reference. To rebuild the download locally:
 
 ```bash
 pnpm --dir website build:worker-skill

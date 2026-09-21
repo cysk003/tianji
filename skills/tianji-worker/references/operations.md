@@ -3,6 +3,7 @@
 ## Contents
 
 - [Connect and inspect](#connect-and-inspect)
+- [Dashboard tRPC fallback](#dashboard-trpc-fallback)
 - [Create, pull, and deploy](#create-pull-and-deploy)
 - [Test drafts and execute saved code](#test-drafts-and-execute-saved-code)
 - [Read logs and troubleshoot](#read-logs-and-troubleshoot)
@@ -15,33 +16,39 @@
 
 Self-hosted servers require `ENABLE_FUNCTION_WORKER=true` and a server restart. Select the intended workspace in the dashboard. Start at `/worker`; creation is `/worker/add`, details `/worker/{workerId}`, and editing `/worker/{workerId}/edit` or `/worker/{workerId}/editor`.
 
-For OpenAPI, use an API key for that workspace with the required permissions. Obtain credentials through the user's existing secure configuration; do not paste or print them. The following shell examples assume `TIANJI_SERVER_URL`, `TIANJI_WORKSPACE_ID`, and `TIANJI_API_KEY` are already set. These variables are conventions for the examples, not CLI configuration.
+For OpenAPI, use an API key whose user has the required workspace permissions. Obtain credentials through the user's existing secure configuration; do not paste or print them. The following shell examples assume `TIANJI_SERVER_URL`, `TIANJI_WORKSPACE_ID`, and `TIANJI_API_KEY` are already set. `TIANJI_SERVER_URL` is the instance URL without the `/open` suffix. These variables are conventions for the examples, not CLI configuration.
+
+Before operating on the target, retrieve its live OpenAPI document:
 
 ```bash
-WORKER_API="${TIANJI_SERVER_URL%/}/open/workspace/${TIANJI_WORKSPACE_ID}/worker"
 curl --fail-with-body --silent --show-error \
-  -H "Authorization: Bearer $TIANJI_API_KEY" "$WORKER_API/all"
-
-# Set WORKER_ID to the actual ID returned above, not its display name.
-curl --fail-with-body --silent --show-error \
-  -H "Authorization: Bearer $TIANJI_API_KEY" "$WORKER_API/$WORKER_ID/info"
+  "${TIANJI_SERVER_URL%/}/open/_document"
 ```
 
-Record the current `name`, `description`, `code`, `active`, `enableCron`, and `cronExpression`. A missing Worker can return `null`. Confirm the target exists before updating it. Inspect saved variables and module bindings in the dashboard when relevant; the public info response does not replace those views.
+1. Confirm a successful response containing an OpenAPI JSON object with `openapi` and `paths`, not an HTML login page or error payload. This document is served only when the instance enables OpenAPI. If it is unavailable or invalid, report the discovery failure and do not issue guessed management API requests. Local code work or supported dashboard actions can continue; direct tRPC still needs the separate version check below.
+2. Find the requested operation using tags, summaries, or operation IDs. Inspect its HTTP method, path, path/query parameters, request body, responses, and security requirements. Resolve referenced schemas (`$ref`), including required fields, defaults, types, enums, and nullability. Absence from `paths` means no exported operation was found; it does not prove the dashboard lacks the feature.
+3. Resolve the document's `servers` URL against the target instance, then append the operation path. Tianji normally declares `/open`; do not add it twice. Keep authenticated requests on the intended instance. Substitute actual workspace/resource IDs and serialize parameters/body according to the live schema.
+4. Treat the target document as authoritative for exported routes and parameters. The examples and field names below describe this skill's maintained version, not a substitute contract for another deployment. Reuse the document within the same task and target; fetch again after switching instances, an upgrade, or a schema-related request failure. Never retry a mutation blindly.
 
-The currently supported management routes, relative to `WORKER_API`, are:
+Use the discovered list and detail operations to inspect the Worker. Record its current name, description, code, active state, cron settings, and revisions. A missing Worker can return `null`; confirm it exists before updating. Read saved variables and module bindings through exported operations when available, otherwise through the maintained dashboard fallback. A basic Worker detail response does not necessarily include that configuration.
 
-| Method | Path                       | Input                                  |
-| ------ | -------------------------- | -------------------------------------- |
-| GET    | `/all`                     | None                                   |
-| GET    | `/{workerId}/info`         | None                                   |
-| POST   | `/upsert`                  | Worker body described below            |
-| PATCH  | `/{workerId}/toggleActive` | `{"active": false}` or `true`          |
-| DELETE | `/{workerId}/delete`       | None; workspace admin required         |
-| GET    | `/{workerId}/revisions`    | None                                   |
-| POST   | `/{workerId}/rollback`     | `{"revisionId": "actual-revision-id"}` |
+OpenAPI describes the wire contract, not all update semantics. Keep the preservation requirements below even when a field is optional. If the target's replacement/preservation semantics are unknown, its schema cannot express a safe update, or it conflicts with the maintained behavior below, check that version's implementation or use its supported dashboard action before changing data. Do not infer equivalent behavior from similar field names or treat an optional field as proof that omission preserves its saved value.
 
-Do not infer additional `/open` routes from dashboard actions. Tests, manual execution, execution history, variable reads, and binding reads currently have no exported OpenAPI route.
+## Dashboard tRPC fallback
+
+Check the target OpenAPI document first: if it exports the needed operation, use that contract. The following procedures are dashboard fallbacks for operations not exported in the version used to maintain this skill. **They are not synchronized by `/open/_document`.** Maintain their names, inputs, and behavior separately against `src/server/trpc/routers/worker.ts` and the matching dashboard callers for the deployed version.
+
+All inputs below include `workspaceId`:
+
+| Operation | tRPC procedure | Additional input |
+| --------- | -------------- | ---------------- |
+| Test draft | `worker.testCode` (mutation) | `code`; optional `workerId`, `payload`, `environmentVariables`, `moduleBindings` |
+| Run saved code | `worker.execute` (mutation) | `workerId`; optional `payload` |
+| Read execution history/logs | `worker.getExecutions` (query) | `workerId`; optional `page` (starts at 1), `pageSize` (default 20, max 100) |
+| Read saved variables | `worker.getEnvironmentVariables` (query) | `workerId` |
+| Read pinned modules | `worker.getModuleBindings` (query) | `workerId` |
+
+Use the authenticated dashboard when possible. A direct tRPC call requires verifying the deployed procedure, input schema, authentication, and client transport/serialization; this table is not a REST URL template. Do not invent `/open` routes or CLI commands for these operations. If neither a supported API nor dashboard access is available, report the exact missing capability/access and the next dashboard step.
 
 ## Create, pull, and deploy
 
@@ -81,16 +88,9 @@ Login is the top-level `tianji login`, not `tianji worker login`. It saves serve
 
 ### OpenAPI upsert
 
-Build a JSON file containing the intended code and settings, then submit it:
+Find the create/update operation in the target document (called `upsert` in this skill's maintained version). Build a JSON file containing the intended code and settings, validate it against that operation's request schema, and submit it using the discovered method and URL, with the required authentication and content type.
 
-```bash
-curl --fail-with-body --silent --show-error \
-  -X POST -H "Authorization: Bearer $TIANJI_API_KEY" \
-  -H 'Content-Type: application/json' \
-  --data-binary @worker-update.json "$WORKER_API/upsert"
-```
-
-Example body for an existing scheduled Worker (replace every example value from the current record):
+Illustrative body for an existing scheduled Worker: confirm field names against the target schema and replace every example value from the current record. In particular, keep `active: false` if the Worker is paused.
 
 ```json
 {
@@ -104,13 +104,13 @@ Example body for an existing scheduled Worker (replace every example value from 
 }
 ```
 
-For creation, omit `id`; `name` and `code` must be nonempty. For updates, **upsert is not a partial patch**: missing `active` defaults to `true`, missing `enableCron` defaults to `false`, and missing/empty `cronExpression` becomes `null`. Always carry forward all three fields unless changing them intentionally. Represent an existing null cron expression by omitting it or sending `""`, not JSON `null`.
+For creation, omit `id`; `name` and `code` must be nonempty in the maintained schema. For updates, **upsert is not a partial patch**: the maintained implementation defaults missing `active` to `true`, missing `enableCron` to `false`, and missing/empty `cronExpression` to `null`. Always carry forward active and cron settings unless changing them intentionally; do not rely on optional fields retaining saved values. In this schema, represent an existing null cron expression by omitting it or sending `""`, not JSON `null`; check the target's nullability before serialization.
 
-`description` also accepts a string, not JSON `null`: omit it when the current description is null. Worker, variable, module, and revision IDs in these examples are placeholders; use the actual IDs returned by Tianji.
+The maintained `description` input also accepts a string, not JSON `null`: omit it when the current description is null unless the target schema specifies otherwise. Worker, variable, module, and revision IDs in these examples are placeholders; use the actual IDs returned by Tianji.
 
-Omitting `environmentVariables` preserves saved variables; providing it replaces the entire collection. Omitted `moduleBindings` are resolved from the source while retaining existing pins for used imports. When explicitly providing bindings, each needs `moduleId`, `moduleRevisionId`, and an `importAlias` starting with `@shared/`. Inspect available modules at `/worker/modules`; do not invent module or revision IDs. See the runtime reference for import behavior.
+In the maintained implementation, omitting `environmentVariables` preserves saved variables; providing it replaces the entire collection. Omitted `moduleBindings` are resolved from the source while retaining existing pins for used imports. When explicitly providing bindings, each needs `moduleId`, `moduleRevisionId`, and an `importAlias` starting with `@shared/`. Inspect available modules at `/worker/modules`; do not invent module or revision IDs. See the runtime reference for import behavior.
 
-Only change `ownerId` as requested; owner reassignment requires owner/admin permissions. `visibility` appears in Worker records but is **not accepted by the current upsert input**. Do not assume a `visibility` property changes access; verify support in the target server version before promising that change.
+Only change `ownerId` as requested; owner reassignment requires owner/admin permissions. A property in a response is not necessarily writable: for example, the maintained Worker response includes `visibility` but its upsert input does not. Check the target's request schema and permissions before promising an access change.
 
 After saving, GET info again and compare the intended fields, including active and cron state.
 
@@ -120,7 +120,7 @@ After saving, GET info again and compare the intended fields, including active a
 
 Open the edit form and use **Test Code**, or the code editor's preview. Supply a JSON payload and inspect **Test Result**, return value, and logs. Test at least a valid input, an invalid input, and any important external-service error path.
 
-The dashboard uses `worker.testCode` with `workspaceId`, `code`, optional `workerId`, `payload`, `environmentVariables`, and `moduleBindings`. An existing `workerId` allows saved variables/bindings to be resolved. Without it, supply required draft configuration. This is a dashboard tRPC procedure, not a `/open/.../testCode` endpoint.
+For API testing, use a draft-test operation if the target document exports one; otherwise follow the `worker.testCode` fallback above. An existing `workerId` allows saved variables/bindings to be resolved. Without it, supply required draft configuration.
 
 Omit `environmentVariables` to test with all saved values, including Secrets. Supplying a draft array replaces that collection for the test only; keep existing Secret IDs with no `value` to reuse them. Omitted `moduleBindings` are resolved from the draft's imports while preserving existing pins for used aliases. No test configuration is saved.
 
@@ -128,7 +128,7 @@ Tests use `context.type === 'test'` and isolated KV; they do not save draft code
 
 ### Manual execution
 
-Use the run action on the Worker detail/editor page. This executes **saved code** with `context.type === 'manual'` and records an execution. It is the dashboard's `worker.execute` procedure (`workspaceId`, `workerId`, optional `payload`). Manual execution can run an inactive Worker; pausing does not block an authorized manual run.
+Use a manual-execution operation exported by the target, or the run action on the Worker detail/editor page (`worker.execute` fallback). This executes **saved code** with `context.type === 'manual'` and records an execution. Manual execution can run an inactive Worker; pausing does not block an authorized manual run.
 
 ### Public HTTP execution
 
@@ -149,7 +149,7 @@ Check the response content and corresponding execution record. An HTTP 200 by it
 
 Open the Worker's **Executions** tab, find the relevant timestamp/trigger, and open its detail panel to inspect status, result/error, logs, duration, and resource usage. **Statistics** provides aggregate behavior; it cannot prove a particular run succeeded. Draft test logs appear in the test result instead of this history.
 
-The dashboard uses `worker.getExecutions` (`workspaceId`, `workerId`, `page` starting at 1, `pageSize` default 20, maximum 100). There is no current OpenAPI execution-history/logs route or CLI logs command.
+For API access, use an execution-history operation exported by the target, or the maintained `worker.getExecutions` fallback. Check the selected interface's pagination contract. The maintained CLI has no logs command.
 
 | Symptom                                      | Check                                                                  |
 | -------------------------------------------- | ---------------------------------------------------------------------- |
@@ -168,7 +168,7 @@ If the needed UI or authenticated session is unavailable, explain the exact miss
 
 Use **Environment Variables** in the edit form. Text values are readable; saved Secrets expose only their identity and whether a value exists. Runtime code reads both through `context.env.KEY`. Never log/return Secrets or replace them with redaction placeholders.
 
-The dashboard reads variables using `worker.getEnvironmentVariables` with `workspaceId` and `workerId`; this is not exported through OpenAPI. Prefer the dashboard when a complete current list is unavailable.
+Read variables through an operation exported by the target, or the maintained `worker.getEnvironmentVariables` fallback. Do not replace the collection without its complete current list; use the dashboard if needed.
 
 For an intentional API update, include `environmentVariables` in a complete upsert body:
 
@@ -180,9 +180,9 @@ For an intentional API update, include `environmentVariables` in a complete upse
 ]
 ```
 
-This array is a **complete replacement**: retain every unrelated row and ID. An empty array deletes all variables. Omit the entire field to preserve the collection. Existing Secrets are preserved by keeping their `id`, key, and `type: "Secret"` while omitting `value`. Sending an empty string changes the Secret to an empty string. New or rotated Secrets need a real `value`, supplied through secure input rather than chat, shell history, or committed files.
+In the maintained implementation, this array is a **complete replacement**: retain every unrelated row and ID. An empty array deletes all variables. Omit the entire field to preserve the collection. Existing Secrets are preserved by keeping their `id`, key, and `type: "Secret"` while omitting `value`. Sending an empty string changes the Secret to an empty string. Verify these semantics for a different target version before updating. New or rotated Secrets need a real `value`, supplied through secure input rather than chat, shell history, or committed files.
 
-Keys must be unique and match `^[A-Za-z_][A-Za-z0-9_]*$`, up to 255 characters. Test the relevant behavior after saving without revealing the values.
+Keys must be unique and satisfy the target input schema (the maintained version uses `^[A-Za-z_][A-Za-z0-9_]*$`, up to 255 characters). Test the relevant behavior after saving without revealing the values.
 
 ## Configure schedules
 
@@ -194,39 +194,14 @@ To disable only scheduling, set `enableCron: false` while explicitly preserving 
 
 ## Review and roll back revisions
 
-Use **Revisions** to compare code and select a revision, or list revisions through the API:
-
-```bash
-curl --fail-with-body --silent --show-error \
-  -H "Authorization: Bearer $TIANJI_API_KEY" "$WORKER_API/$WORKER_ID/revisions"
-```
-
-Use the chosen record's **`id`**, not its display revision number, in `rollback.json`:
-
-```json
-{ "revisionId": "actual-revision-id" }
-```
-
-```bash
-curl --fail-with-body --silent --show-error \
-  -X POST -H "Authorization: Bearer $TIANJI_API_KEY" \
-  -H 'Content-Type: application/json' \
-  --data-binary @rollback.json "$WORKER_API/$WORKER_ID/rollback"
-```
+Use **Revisions** to compare code and select a revision, or discover the revision-list and rollback operations in the target document. Use the chosen record's **`id`**, not its display revision number, in the rollback request (`revisionId` in the maintained schema). Confirm the method, URL, and body against the target before submitting.
 
 Rollback restores code and pinned shared-module bindings. It preserves current name, description, active state, cron configuration, and environment variables; it is **not a configuration rollback**. Code/binding changes create a new revision; configuration-only edits do not. Verify current code/settings afterward, then test behavior using the current environment.
 
 ## Pause, resume, and delete
 
-Despite its name, `toggleActive` sets the supplied value explicitly:
+Find the active-state operation in the target document, or use the dashboard control. The maintained `toggleActive` operation sets the supplied value explicitly: `active: false` pauses and `active: true` resumes. Confirm the target method, path, and request schema before calling it.
 
-```bash
-curl --fail-with-body --silent --show-error \
-  -X PATCH -H "Authorization: Bearer $TIANJI_API_KEY" \
-  -H 'Content-Type: application/json' --data '{"active":false}' \
-  "$WORKER_API/$WORKER_ID/toggleActive"
-```
+This preserves cron fields. Inactive Workers reject public HTTP triggers and do not run on cron; authorized manual execution remains possible. Re-read info to verify the state.
 
-Send `true` to resume. This preserves cron fields. Inactive Workers reject public HTTP triggers and do not run on cron; authorized manual execution remains possible. Re-read info to verify the state.
-
-For explicitly requested permanent removal, first retain any code/configuration the user needs, then use the dashboard delete action or `DELETE /{workerId}/delete`. This requires workspace admin permissions. Use pausing when the request is only to stop normal triggers; deleting is not necessary. After deletion, verify the Worker no longer appears in the list.
+For explicitly requested permanent removal, first retain any code/configuration the user needs, then use the dashboard delete action or the deletion operation discovered in the target document. This requires workspace admin permissions. Use pausing when the request is only to stop normal triggers; deleting is not necessary. After deletion, verify the Worker no longer appears in the list.

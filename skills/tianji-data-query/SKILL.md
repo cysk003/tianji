@@ -1,12 +1,9 @@
 ---
 name: tianji-data-query
 description: >
-  Query website analytics, monitor uptime, survey results, telemetry data,
-  feed events, application stats, and more from the Tianji platform via its
-  read-only OpenAPI (69 GET endpoints across 14 service domains).
   Use when the user asks about website traffic, pageviews, monitor status,
   survey feedback, telemetry events, feed channels, billing usage,
-  or any Tianji platform data.
+  application stats, or other Tianji platform data through read-only queries.
 ---
 
 # Tianji Analytics
@@ -25,19 +22,24 @@ Three values are required (provided via skill config):
 
 ## Making API Requests
 
-All endpoints are under `{TIANJI_BASE_URL}/open` and require a Bearer token:
+Before querying data, fetch and read the **target instance's** OpenAPI document. `TIANJI_BASE_URL` is the instance URL without the `/open` suffix:
 
 ```bash
-curl -H "Authorization: Bearer {TIANJI_API_KEY}" \
-  "{TIANJI_BASE_URL}/open/workspace/{TIANJI_WORKSPACE_ID}/website/all"
+curl --fail-with-body --silent --show-error \
+  "${TIANJI_BASE_URL%/}/open/_document"
 ```
 
-Only GET requests are allowed. All responses are JSON.
+Confirm a successful response containing an OpenAPI JSON object with `openapi` and `paths`, not HTML or an error payload. If discovery fails, report the failure and stop API queries; do not substitute bundled paths or guess endpoints. The instance must enable OpenAPI to serve this document.
+
+Use the live document to confirm the operation's method, path, path/query parameters, response schema, and authentication. Resolve referenced schemas (`$ref`), including required fields, types, formats, defaults, enums, and pagination. Resolve `servers` against the target instance before appending an operation path (normally `/open`; do not add it twice). Keep authenticated requests on the intended instance and send the API key via `Authorization: Bearer ...`, never in the URL or output.
+
+**Only GET requests are allowed**, even though the live document also describes writes. If the requested operation has no exported GET route, report that limitation. Do not derive `/open` routes from dashboard tRPC procedures; those need separate maintained references and are outside this skill.
+
+The target document takes precedence over bundled references and examples. Reuse it within the same task and target; fetch again after switching instances, an upgrade, or a schema-related failure. Parse successful API responses as JSON and report HTTP/API errors rather than treating them as query results.
 
 ## Service Domains
 
-Find the exact endpoint and parameters in [api-endpoints.md](references/api-endpoints.md).
-For full parameter schemas, consult [openapi-readonly.json](references/openapi-readonly.json).
+[api-endpoints.md](references/api-endpoints.md) and [openapi-readonly.json](references/openapi-readonly.json) are bundled snapshots for discovering likely operations. Their endpoint counts and schemas may differ from the target; confirm every selected operation against its live document.
 
 | Domain | Endpoints | Typical Questions |
 |--------|-----------|-------------------|
@@ -58,11 +60,13 @@ For full parameter schemas, consult [openapi-readonly.json](references/openapi-r
 ## Workflow
 
 1. Identify the service domain from the user's question
-2. Read [api-endpoints.md](references/api-endpoints.md) to find the endpoint
-3. Construct the GET request with required path/query parameters
-4. Parse the JSON response and summarize for the user
+2. Read the target's `/open/_document` and find the relevant exported GET operation; bundled references are lookup hints only
+3. Construct the GET request using the live path and parameter schemas, actual resource IDs, and required authentication
+4. Parse the JSON response, redact sensitive fields, and summarize for the user
 
 ## Common Scenarios
+
+The routes below illustrate the bundled version. Confirm paths, parameters, timestamp formats, and pagination against the target document before using them.
 
 ### Website traffic overview
 
@@ -113,12 +117,12 @@ Some GET endpoints may return fields containing platform-stored secrets (e.g. `m
 audit logs, and billing may contain PII or internal details.
 
 **Rules:**
+- Live schemas and API responses are not redacted by the bundled schema's filtering; always apply these rules yourself
 - NEVER display `modelApiKey`, `apiKey`, `secret`, `token`, `password`, or `credential` fields to the user
 - Redact or omit these fields when summarizing API responses
 - When querying workspace members or audit logs, only surface non-sensitive metadata (names, roles, timestamps) unless the user explicitly requests full detail
 
 ## Notes
 
-- Timestamps use milliseconds since epoch (e.g. `1704067200000` for 2024-01-01)
-- Pagination: some endpoints use `cursor` parameter; check the response for `nextCursor`
-- The `type` parameter in website metrics accepts: `url`, `language`, `referrer`, `title`, `browser`, `os`, `device`, `country`, `event`
+- Use timestamp formats and metric `type` enums from the target operation; bundled examples use milliseconds since epoch
+- Follow the target operation's pagination contract; some endpoints use `cursor` and return `nextCursor`
